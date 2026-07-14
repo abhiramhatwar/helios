@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Helios — Event Intelligence</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: #0f1117; }
+    .feed-item { animation: slideIn 0.2s ease-out; }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .anomaly-flash { animation: flash 1s ease-out; }
+    @keyframes flash {
+      0%, 100% { background: transparent; }
+      50%       { background: rgba(239,68,68,0.15); }
+    }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
+  </style>
+</head>
+<body class="text-gray-100 min-h-screen font-mono">
+
+  <!-- Header -->
+  <header class="border-b border-gray-800 px-6 py-4 flex items-center justify-between bg-gray-900/80 backdrop-blur sticky top-0 z-10">
+    <div class="flex items-center gap-4">
+      <span class="text-xl font-bold tracking-tight text-blue-400">⚡ HELIOS</span>
+      <span class="text-gray-500 text-sm hidden sm:block">Real-time Event Intelligence Engine</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <div id="ws-dot" class="w-2 h-2 rounded-full bg-gray-600 transition-colors duration-300"></div>
+      <span id="ws-label" class="text-xs text-gray-500">connecting...</span>
+    </div>
+  </header>
+
+  <main class="p-4 sm:p-6 space-y-4">
+
+    <!-- Stat cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Total Events</div>
+        <div id="stat-total" class="text-3xl font-bold text-white">0</div>
+        <div id="stat-rate" class="text-xs text-gray-600 mt-1">0 ev/s</div>
+      </div>
+      <div class="bg-gray-900 border border-red-900/40 rounded-xl p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Anomalies</div>
+        <div id="stat-anomalies" class="text-3xl font-bold text-red-400">0</div>
+        <div id="stat-anomaly-pct" class="text-xs text-gray-600 mt-1">0.0% of total</div>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Circuit Breaker</div>
+        <div id="stat-cb" class="text-lg font-bold text-green-400">CLOSED</div>
+        <div class="text-xs text-gray-600 mt-1">AI active</div>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Last Event</div>
+        <div id="stat-last-source" class="text-sm font-bold text-blue-300 truncate">—</div>
+        <div id="stat-last-time" class="text-xs text-gray-600 mt-1">—</div>
+      </div>
+    </div>
+
+    <!-- Chart + Feed -->
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+      <!-- Rate chart -->
+      <div class="lg:col-span-3 bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-xs text-gray-500 uppercase tracking-wider">Event Rate — last 60s</span>
+          <div class="flex items-center gap-4 text-xs text-gray-600">
+            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>all</span>
+            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500 inline-block"></span>anomalies</span>
+          </div>
+        </div>
+        <canvas id="rateChart"></canvas>
+      </div>
+
+      <!-- Live feed -->
+      <div class="lg:col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-4 flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs text-gray-500 uppercase tracking-wider">Live Feed</span>
+          <span id="feed-count" class="text-xs text-gray-700">0 events</span>
+        </div>
+        <div id="event-feed" class="flex-1 overflow-y-auto space-y-1 max-h-72 pr-1"></div>
+      </div>
+    </div>
+
+    <!-- Anomaly log -->
+    <div class="bg-gray-900 border border-red-900/30 rounded-xl p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-3">Anomaly Log</div>
+      <div id="anomaly-log" class="space-y-2 max-h-48 overflow-y-auto">
+        <div class="text-xs text-gray-700 italic">No anomalies detected yet.</div>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

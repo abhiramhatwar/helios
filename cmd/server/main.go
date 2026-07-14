@@ -132,6 +132,11 @@ func main() {
 		if err := pub.Cache(ctx, enriched); err != nil {
 			log.Error().Err(err).Str("event_id", ev.ID).Msg("redis cache failed")
 		}
+		// Broadcast every event to the WebSocket dashboard.
+		if err := pub.PublishEvent(ctx, enriched); err != nil {
+			log.Error().Err(err).Str("event_id", ev.ID).Msg("event publish failed")
+		}
+		// Broadcast anomalies to the gRPC WatchAlerts stream.
 		if enriched.IsAnomaly {
 			if err := pub.PublishAlert(ctx, enriched); err != nil {
 				log.Error().Err(err).Str("event_id", ev.ID).Msg("alert publish failed")

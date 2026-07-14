@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog"
 )
 
-const alertChannel = "helios:alerts"
+const eventChannel = "helios:events"
 
 // Hub manages all active WebSocket connections and broadcasts Redis pub/sub
 // messages to every connected client.
@@ -57,7 +57,7 @@ func (h *Hub) broadcast(msg []byte) {
 // Run subscribes to the Redis alert channel and broadcasts every message
 // to all connected WebSocket clients. Blocks until ctx is cancelled.
 func (h *Hub) Run(ctx context.Context) {
-	sub := h.redis.Subscribe(ctx, alertChannel)
+	sub := h.redis.Subscribe(ctx, eventChannel)
 	defer sub.Close()
 
 	h.log.Info().Msg("WebSocket hub running, listening for alerts")

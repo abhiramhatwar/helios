@@ -42,6 +42,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.health)
 	s.mux.Handle("GET /metrics", promhttp.Handler())
 	s.mux.HandleFunc("GET /ws", s.handleWS)
+	// Dashboard — serve web/ directory at root.
+	s.mux.Handle("/", http.FileServer(http.Dir("web")))
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {

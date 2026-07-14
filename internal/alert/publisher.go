@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	alertChannel = "helios:alerts"
+	alertChannel = "helios:alerts" // anomaly-only, consumed by gRPC WatchAlerts
+	eventChannel = "helios:events" // all enriched events, consumed by WebSocket hub
 	eventTTL     = 24 * time.Hour
 )
 
@@ -42,7 +43,16 @@ func (p *Publisher) Cache(ctx context.Context, ev event.EnrichedEvent) error {
 	return p.client.Set(ctx, "helios:event:"+ev.ID, b, eventTTL).Err()
 }
 
-// PublishAlert broadcasts an anomalous event to all WebSocket subscribers.
+// PublishEvent broadcasts every enriched event to the WebSocket dashboard channel.
+func (p *Publisher) PublishEvent(ctx context.Context, ev event.EnrichedEvent) error {
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	return p.client.Publish(ctx, eventChannel, string(b)).Err()
+}
+
+// PublishAlert broadcasts an anomalous event to the gRPC WatchAlerts channel.
 func (p *Publisher) PublishAlert(ctx context.Context, ev event.EnrichedEvent) error {
 	b, err := json.Marshal(ev)
 	if err != nil {
