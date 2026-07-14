@@ -28,4 +28,7 @@ clean:
 	rm -rf bin/
 
 generate:
-	protoc --go_out=. --go-grpc_out=. proto/*.proto
+	PATH="$$PATH:$(shell go env GOPATH)/bin" protoc \
+		--go_out=proto/gen --go_opt=paths=source_relative \
+		--go-grpc_out=proto/gen --go-grpc_opt=paths=source_relative \
+		proto/event.proto

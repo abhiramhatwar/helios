@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package helios.v1;
+
+option go_package = "github.com/helios/proto/gen/proto;heliosv1";
+
+// ── Messages ────────────────────────────────────────────────────────────────
+
+message IngestRequest {
+  string source  = 1;
+  string level   = 2;  // info | warning | error | critical
+  string message = 3;
+  map<string, string> tags = 4;
+}
+
+message IngestResponse {
+  string id       = 1;
+  bool   accepted = 2;
+  string reason   = 3;  // non-empty when accepted=false (e.g. "buffer full")
+}
+
+message WatchRequest {
+  // Filter by source names. Empty = subscribe to all sources.
+  repeated string sources = 1;
+  // Only receive alerts with anomaly_score >= this value. 0 = all.
+  double min_anomaly_score = 2;
+}
+
+message AlertEvent {
+  string id             = 1;
+  string source         = 2;
+  string level          = 3;
+  string message        = 4;
+  string classification = 5;
+  string summary        = 6;
+  double anomaly_score  = 7;
+  bool   is_anomaly     = 8;
+  int64  timestamp_unix = 9;  // Unix nanoseconds
+  int64  processed_unix = 10; // Unix nanoseconds
+}
+
+// ── Service ──────────────────────────────────────────────────────────────────
+
+service HeliosService {
+  // Client-side streaming: send a batch of events, get a single summary.
+  rpc IngestStream(stream IngestRequest) returns (IngestResponse);
+
+  // Server-side streaming: subscribe to real-time anomaly alerts.
+  rpc WatchAlerts(WatchRequest) returns (stream AlertEvent);
+}

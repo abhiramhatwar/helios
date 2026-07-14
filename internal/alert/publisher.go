@@ -51,6 +51,11 @@ func (p *Publisher) PublishAlert(ctx context.Context, ev event.EnrichedEvent) er
 	return p.client.Publish(ctx, alertChannel, string(b)).Err()
 }
 
+// Client returns the underlying Redis client for use by gRPC server and WS hub.
+func (p *Publisher) Client() *redis.Client {
+	return p.client
+}
+
 func (p *Publisher) Close() error {
 	return p.client.Close()
 }

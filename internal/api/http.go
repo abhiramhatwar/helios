@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helios/internal/buffer"
+	"github.com/helios/internal/ws"
 	"github.com/helios/pkg/event"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
@@ -18,12 +19,13 @@ import (
 // so handlers can enqueue events without touching any other pipeline detail.
 type Server struct {
 	rb  *buffer.RingBuffer[event.Event]
+	hub *ws.Hub
 	log zerolog.Logger
 	mux *http.ServeMux
 }
 
-func New(rb *buffer.RingBuffer[event.Event], log zerolog.Logger) *Server {
-	s := &Server{rb: rb, log: log, mux: http.NewServeMux()}
+func New(rb *buffer.RingBuffer[event.Event], hub *ws.Hub, log zerolog.Logger) *Server {
+	s := &Server{rb: rb, hub: hub, log: log, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -39,6 +41,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/status", s.status)
 	s.mux.HandleFunc("GET /health", s.health)
 	s.mux.Handle("GET /metrics", promhttp.Handler())
+	s.mux.HandleFunc("GET /ws", s.handleWS)
+}
+
+func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	ws.ServeWS(s.hub, w, r, s.log)
 }
 
 // --- handlers ---

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,11 +17,15 @@ import (
 	"github.com/helios/internal/circuit"
 	"github.com/helios/internal/detector"
 	"github.com/helios/internal/enrichment"
+	"github.com/helios/internal/grpcserver"
 	"github.com/helios/internal/metrics"
 	"github.com/helios/internal/storage"
 	"github.com/helios/internal/worker"
+	"github.com/helios/internal/ws"
+	heliosv1 "github.com/helios/proto/gen/proto"
 	"github.com/helios/pkg/event"
 	"github.com/rs/zerolog"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -39,14 +44,12 @@ func main() {
 	}
 	log.Info().Uint64("capacity", cfg.Buffer.Capacity).Msg("ring buffer initialised")
 
-	// Background context for long-lived clients (Gemini, Postgres, Redis).
 	bgCtx := context.Background()
 
-	// Circuit breaker for Gemini API: open after 5 failures, recover after 30s,
-	// require 2 consecutive successes to close.
+	// Circuit breaker: open after 5 failures, recover after 30s, 2 successes to close.
 	aiBreaker := circuit.New(5, 30*time.Second, 2)
 
-	// AI enrichment layer — gracefully degrades if Gemini is unreachable.
+	// AI enrichment.
 	var enricher enrichment.Enricher
 	if cfg.Gemini.APIKey == "" {
 		log.Warn().Msg("GEMINI_API_KEY not set — AI enrichment disabled, using passthrough")
@@ -61,7 +64,7 @@ func main() {
 		log.Info().Msg("Gemini 2.0 Flash enricher ready")
 	}
 
-	// Anomaly detector: 60 buckets × 10s = 10 min window, z-score threshold 2.0.
+	// Anomaly detector: 60 buckets × 10s = 10-min sliding window, z-score threshold 2.0.
 	anom := detector.New(60, 10*time.Second, 2.0)
 	defer anom.Stop()
 
@@ -91,10 +94,8 @@ func main() {
 	processEvent := func(ctx context.Context, ev event.Event) error {
 		metrics.EventsIngested.WithLabelValues(string(ev.Source), string(ev.Level)).Inc()
 
-		// Record in anomaly detector (rate-based spike detection).
 		rateAnomaly := anom.Record(string(ev.Source))
 
-		// AI enrichment (classification + summary + anomaly score).
 		start := time.Now()
 		enriched, err := enricher.Enrich(ctx, ev)
 		if err != nil {
@@ -103,7 +104,6 @@ func main() {
 		metrics.EnrichmentDuration.Observe(time.Since(start).Seconds())
 		metrics.EventsEnriched.WithLabelValues(enriched.Classification).Inc()
 
-		// Merge rate-anomaly signal into AI anomaly score.
 		if rateAnomaly && !enriched.IsAnomaly {
 			enriched.IsAnomaly = true
 			enriched.AnomalyScore = max(enriched.AnomalyScore, 0.75)
@@ -120,19 +120,15 @@ func main() {
 				Msg("anomaly detected")
 		}
 
-		// Update circuit breaker metric.
 		if aiBreaker.State() == "open" {
 			metrics.CircuitBreakerOpen.Set(1)
 		} else {
 			metrics.CircuitBreakerOpen.Set(0)
 		}
 
-		// Persist to PostgreSQL.
 		if err := store.Save(ctx, enriched); err != nil {
 			log.Error().Err(err).Str("event_id", ev.ID).Msg("store save failed")
 		}
-
-		// Cache in Redis and publish alert if anomalous.
 		if err := pub.Cache(ctx, enriched); err != nil {
 			log.Error().Err(err).Str("event_id", ev.ID).Msg("redis cache failed")
 		}
@@ -147,13 +143,21 @@ func main() {
 
 	pool := worker.New(rb, cfg.Worker.Count, cfg.Worker.MaxConcurrent, processEvent, log)
 
-	httpSrv := api.New(rb, log)
+	// WebSocket hub — bridges Redis pub/sub to browser clients.
+	hub := ws.NewHub(pub.Client(), log)
+
+	// HTTP server with REST + WebSocket endpoints.
+	httpSrv := api.New(rb, hub, log)
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      httpSrv.Handler(),
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeoutSecs) * time.Second,
 		WriteTimeout: time.Duration(cfg.Server.WriteTimeoutSecs) * time.Second,
 	}
+
+	// gRPC server on port 9090.
+	grpcSrv := grpc.NewServer()
+	heliosv1.RegisterHeliosServiceServer(grpcSrv, grpcserver.New(rb, pub.Client(), log))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -166,8 +170,12 @@ func main() {
 	}()
 
 	pool.Start(ctx)
-	log.Info().Int("workers", cfg.Worker.Count).Int("max_concurrent", cfg.Worker.MaxConcurrent).Msg("worker pool started")
+	log.Info().Int("workers", cfg.Worker.Count).Msg("worker pool started")
 
+	// WebSocket hub.
+	go hub.Run(ctx)
+
+	// HTTP server.
 	go func() {
 		log.Info().Str("addr", srv.Addr).Msg("HTTP server listening")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -175,7 +183,22 @@ func main() {
 		}
 	}()
 
+	// gRPC server.
+	go func() {
+		lis, err := net.Listen("tcp", ":9090")
+		if err != nil {
+			log.Fatal().Err(err).Msg("gRPC listen failed")
+		}
+		log.Info().Str("addr", ":9090").Msg("gRPC server listening")
+		if err := grpcSrv.Serve(lis); err != nil {
+			log.Error().Err(err).Msg("gRPC server error")
+		}
+	}()
+
 	<-ctx.Done()
+
+	// Graceful shutdown.
+	grpcSrv.GracefulStop()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
@@ -186,4 +209,3 @@ func main() {
 	pool.Wait()
 	log.Info().Msg("helios shutdown complete")
 }
-
