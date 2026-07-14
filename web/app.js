@@ -224,3 +224,30 @@ function connect() {
 }
 
 connect();
+
+// Poll status endpoint every 5s to show live circuit breaker state.
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/v1/status');
+    if (!r.ok) return;
+    const data = await r.json();
+    const cb = (data.circuit_breaker || 'closed').toLowerCase();
+    const el    = document.getElementById('stat-cb');
+    const elSub = document.getElementById('stat-cb-sub');
+    if (cb === 'open') {
+      el.textContent    = 'OPEN';
+      el.className      = 'text-lg font-bold text-red-400';
+      elSub.textContent = 'AI paused';
+    } else if (cb === 'half-open') {
+      el.textContent    = 'HALF-OPEN';
+      el.className      = 'text-lg font-bold text-yellow-400';
+      elSub.textContent = 'probing AI';
+    } else {
+      el.textContent    = 'CLOSED';
+      el.className      = 'text-lg font-bold text-green-400';
+      elSub.textContent = 'AI active';
+    }
+  } catch { /* server not ready yet */ }
+}
+pollStatus();
+setInterval(pollStatus, 5000);

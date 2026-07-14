@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helios/internal/buffer"
+	"github.com/helios/internal/circuit"
 	"github.com/helios/internal/middleware"
 	"github.com/helios/internal/ws"
 	"github.com/helios/pkg/event"
@@ -25,9 +26,10 @@ type Server struct {
 	mux         *http.ServeMux
 	rateLimiter *middleware.RateLimiter
 	apiKey      string
+	breaker     *circuit.Breaker
 }
 
-func New(rb *buffer.RingBuffer[event.Event], hub *ws.Hub, log zerolog.Logger, rps float64, burst int, apiKey string) *Server {
+func New(rb *buffer.RingBuffer[event.Event], hub *ws.Hub, log zerolog.Logger, rps float64, burst int, apiKey string, breaker *circuit.Breaker) *Server {
 	s := &Server{
 		rb:          rb,
 		hub:         hub,
@@ -35,6 +37,7 @@ func New(rb *buffer.RingBuffer[event.Event], hub *ws.Hub, log zerolog.Logger, rp
 		mux:         http.NewServeMux(),
 		rateLimiter: middleware.NewRateLimiter(rps, burst),
 		apiKey:      apiKey,
+		breaker:     breaker,
 	}
 	s.routes()
 	return s
@@ -136,10 +139,15 @@ func (s *Server) ingestBatch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	cap := s.rb.Cap()
 	length := s.rb.Len()
+	cbState := "closed"
+	if s.breaker != nil {
+		cbState = s.breaker.State()
+	}
 	s.json(w, http.StatusOK, map[string]any{
-		"buffer_len":   length,
-		"buffer_cap":   cap,
-		"buffer_usage": fmt.Sprintf("%.1f%%", float64(length)/float64(cap)*100),
+		"buffer_len":      length,
+		"buffer_cap":      cap,
+		"buffer_usage":    fmt.Sprintf("%.1f%%", float64(length)/float64(cap)*100),
+		"circuit_breaker": cbState,
 	})
 }
 
