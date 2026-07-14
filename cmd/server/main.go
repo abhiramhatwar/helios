@@ -152,7 +152,7 @@ func main() {
 	hub := ws.NewHub(pub.Client(), log)
 
 	// HTTP server with REST + WebSocket endpoints.
-	httpSrv := api.New(rb, hub, log)
+	httpSrv := api.New(rb, hub, log, cfg.RateLimit.RPS, cfg.RateLimit.Burst, cfg.Auth.APIKey)
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      httpSrv.Handler(),

@@ -1,160 +1,137 @@
 # Helios — Real-time Event Intelligence Engine
 
-A high-throughput event stream processing system built in Go that ingests structured events, enriches them with AI in real-time, detects anomalies, and pushes instant alerts to a live dashboard.
-
-## What it does
-
-Every software system produces events — errors, warnings, user actions, payment failures. Helios watches all of them in real-time, uses AI to understand what is happening, and alerts you the moment something goes wrong — before your users notice.
+A high-throughput event ingestion and anomaly detection system built in Go. Ingests events via HTTP or gRPC, enriches them with AI classification, detects anomalies using statistical analysis, and streams results live to a WebSocket dashboard.
 
 ## Architecture
 
 ```
-Client (HTTP / gRPC)
+Producers (HTTP REST / gRPC client-streaming)
         │
         ▼
-   API Layer (net/http)
-        │
-        ▼
-Lock-Free Ring Buffer (MPMC · Vyukov algorithm · 8M ops/sec)
-        │
-        ▼
-Worker Pool (goroutines + semaphore backpressure)
-        │
-        ▼
-Circuit Breaker (Closed → Open → HalfOpen · atomic state machine)
-        │
-        ▼
-AI Enrichment Layer (Gemini 2.0 Flash · async parallel inference)
-        │
-        ▼
-Anomaly Detector (sliding window · dynamic baseline per source)
-        │
-   ┌────┴────┐
-   ▼         ▼
-Alert     Storage
-Engine    (PostgreSQL + Redis cache)
-   │
-   ▼
-WebSocket Hub (real-time dashboard push)
+┌───────────────────┐
+│  Lock-free MPMC   │  Vyukov sequence algorithm
+│   Ring Buffer     │  8M+ ops/sec · 0 allocations per op
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│  Goroutine Worker │  Semaphore backpressure
+│      Pool         │  Configurable concurrency
+└────────┬──────────┘
+         │
+    ┌────┴────┐
+    ▼         ▼
+┌────────┐ ┌──────────────────┐
+│ Anomaly│ │  Gemini 2.0 Flash│  Wrapped in circuit breaker
+│Detector│ │   AI Enrichment  │  (Closed → Open → HalfOpen)
+│z-score │ └────────┬─────────┘
+└────┬───┘          │
+     └──────┬───────┘
+            ▼
+     ┌─────────────┐
+     │  PostgreSQL  │  pgx/v5 · auto-migration · idempotent upserts
+     └──────┬──────┘
+            │
+            ▼
+     ┌─────────────┐
+     │    Redis     │  helios:events  ──► WebSocket hub ──► Browser dashboard
+     │   Pub/Sub    │  helios:alerts  ──► gRPC WatchAlerts stream
+     └─────────────┘
 ```
+
+## Key Engineering Decisions
+
+**Lock-free ring buffer** — Custom MPMC queue using atomic sequence numbers (Vyukov algorithm). Zero heap allocations on the hot path, cache-line padded slots to prevent false sharing. Benchmarks at 8M+ ops/sec on a single core.
+
+**Circuit breaker** — Three-state atomic state machine wrapping Gemini API calls. Configurable failure threshold, recovery window, and success count to re-close. System degrades gracefully to passthrough enrichment when the breaker is open — no data is dropped.
+
+**Sliding window anomaly detection** — Per-source ring of 60 ten-second buckets (10-minute history). Z-score threshold of 2.0 flags statistical outliers in event rate. Single background goroutine rotates all source windows; no per-event goroutine spawning.
+
+**Two Redis channels** — `helios:events` fans every enriched event to the WebSocket dashboard. `helios:alerts` carries only anomaly payloads to gRPC subscribers. Fully decouples dashboard and alerting concerns.
+
+**Token bucket rate limiting** — Per-IP buckets with lazy init and a background goroutine that purges buckets idle for 5+ minutes. No external dependency.
+
+## Features
+
+- **Dual ingestion** — REST (`POST /api/v1/events`, batch) and gRPC client-streaming (`IngestStream`)
+- **AI enrichment** — Gemini 2.0 Flash classifies each event, produces a summary and anomaly score
+- **Anomaly detection** — Z-score over a 10-minute sliding window, per event source
+- **Live dashboard** — WebSocket-fed Chart.js dashboard showing events/s, anomalies/s, live feed, anomaly log
+- **gRPC alert streaming** — `WatchAlerts` RPC streams anomalies to subscribers, filterable by source and min score
+- **Observability** — Prometheus metrics (events ingested, enrichment latency, circuit breaker state) + Grafana auto-provisioned
+- **Rate limiting** — 100 req/s per IP, burst 200, 429 with `Retry-After` on exceed
+- **API key auth** — Bearer token or `X-API-Key` header; health/metrics/dashboard routes exempt
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Language | Go 1.22 |
-| API | net/http (Go standard library) |
-| Queue | Custom lock-free MPMC ring buffer |
-| Concurrency | goroutines · errgroup · sync/atomic |
-| Circuit Breaker | Custom atomic state machine |
-| AI | Gemini 2.0 Flash API |
-| Vector Search | pgvector (Day 4+) |
-| Database | PostgreSQL (pgx v5) |
-| Cache + PubSub | Redis |
-| Real-time | WebSocket (gorilla/websocket) |
-| Metrics | Prometheus |
-| Logging | zerolog |
-| Config | Viper (env-driven) |
-| Infrastructure | Docker + Docker Compose |
+| AI | Gemini 2.0 Flash (google/generative-ai-go) |
+| Database | PostgreSQL 16 (pgx/v5) |
+| Cache / Pub-Sub | Redis 7 (go-redis/v9) |
+| RPC | gRPC + Protocol Buffers |
+| WebSocket | gorilla/websocket |
+| Metrics | Prometheus + Grafana |
+| Logging | zerolog (structured JSON) |
+| Config | Viper (env vars) |
 
-## Go Concepts Demonstrated
+## Running Locally
 
-- Lock-free data structures (`sync/atomic`, CAS operations)
-- Goroutine worker pool with semaphore backpressure
-- Circuit breaker pattern (atomic state machine)
-- Fan-out / fan-in channel orchestration
-- Context propagation and cancellation trees
-- Interface-driven plugin architecture
-- Generics for typed event schemas
-- Graceful shutdown with buffer drain
-- gRPC streaming (Day 3)
-
-## Getting Started
-
-### Prerequisites
-
-- Go 1.22+
-- Docker + Docker Compose
-
-### Run locally
+**Prerequisites**: Docker, Go 1.22+
 
 ```bash
-# Clone the repo
-git clone https://github.com/YOUR_USERNAME/helios.git
+git clone https://github.com/abhiramhatwar/helios.git
 cd helios
 
-# Start PostgreSQL, Redis, Prometheus
-make docker-up
+# Start PostgreSQL, Redis, Prometheus, Grafana
+docker compose up -d
 
-# Copy env file
-cp .env.example .env
+# Run without AI enrichment (passthrough mode)
+go run ./cmd/server
 
-# Install dependencies
-make deps
-
-# Run the server
-make run
+# Run with AI enrichment
+GEMINI_API_KEY=your_key go run ./cmd/server
 ```
 
-Server starts at `http://localhost:8080`
+- Dashboard: `http://localhost:8080`
+- Grafana: `http://localhost:3000` (admin / helios)
+- gRPC: `:9090`
 
-### Send an event
+## API
 
 ```bash
+# Single event
 curl -X POST http://localhost:8080/api/v1/events \
   -H "Content-Type: application/json" \
-  -d '{
-    "source": "payment-service",
-    "level": "error",
-    "message": "payment gateway timeout",
-    "payload": { "amount": 5000, "user_id": "u123" }
-  }'
-```
+  -d '{"source":"payments","level":"error","message":"gateway timeout","tags":["db","infra"]}'
 
-### Send a batch
-
-```bash
+# Batch
 curl -X POST http://localhost:8080/api/v1/events/batch \
   -H "Content-Type: application/json" \
-  -d '[
-    {"source":"auth-service","level":"warning","message":"login attempt failed"},
-    {"source":"payment-service","level":"error","message":"gateway timeout"}
-  ]'
-```
+  -d '[{"source":"auth","level":"warn","message":"login failed"},{"source":"api","level":"info","message":"ok"}]'
 
-### Check buffer status
-
-```bash
+# Buffer depth
 curl http://localhost:8080/api/v1/status
-```
 
-### Health check
-
-```bash
+# Health
 curl http://localhost:8080/health
 ```
 
-## API Reference
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/v1/events` | Ingest a single event |
-| POST | `/api/v1/events/batch` | Ingest multiple events |
-| GET | `/api/v1/status` | Buffer depth and usage |
-| GET | `/health` | Health check |
-| GET | `/metrics` | Prometheus metrics |
-| WS | `/ws` | Real-time alert stream (Day 3) |
-
-## Environment Variables
+## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `SERVER_PORT` | `8080` | HTTP server port |
-| `POSTGRES_DSN` | `postgres://helios:helios@localhost:5432/helios` | Database connection |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection |
+| `SERVER_PORT` | `8080` | HTTP listen port |
+| `POSTGRES_DSN` | `postgres://helios:helios@localhost:5432/helios` | PostgreSQL DSN |
+| `REDIS_URL` | `redis://localhost:6379` | Redis URL |
+| `GEMINI_API_KEY` | `` | Gemini API key (optional — passthrough if unset) |
 | `BUFFER_CAPACITY` | `4096` | Ring buffer size (must be power of 2) |
-| `WORKER_COUNT` | `8` | Number of worker goroutines |
-| `WORKER_MAX_CONCURRENT` | `32` | Max concurrent event processors |
+| `WORKER_COUNT` | `8` | Consumer goroutines |
+| `WORKER_MAX_CONCURRENT` | `32` | Max concurrent enrichment calls |
+| `RATELIMIT_RPS` | `100` | Requests/sec per IP |
+| `RATELIMIT_BURST` | `200` | Burst capacity per IP |
+| `AUTH_API_KEY` | `` | API key for protected routes (optional) |
 
 ## Benchmarks
 
@@ -162,10 +139,25 @@ curl http://localhost:8080/health
 BenchmarkRingBuffer_Enqueue-10    8,248,914 ops/sec    0 B/op    0 allocs/op
 ```
 
-## Project Status
+## Project Structure
 
-- [x] Day 1 — Core pipeline (ring buffer, worker pool, circuit breaker, HTTP API)
-- [ ] Day 2 — AI enrichment layer + anomaly detection + PostgreSQL + Redis
-- [ ] Day 3 — gRPC streaming + WebSocket real-time alerts
-- [ ] Day 4 — Live dashboard + Prometheus + Grafana
-- [ ] Day 5 — Rate limiting + auth + deployment (Fly.io)
+```
+helios/
+├── cmd/server/          # Entrypoint — wires the full pipeline
+├── config/              # Viper config with env var binding
+├── internal/
+│   ├── buffer/          # Lock-free MPMC ring buffer (generics)
+│   ├── worker/          # Goroutine pool with semaphore backpressure
+│   ├── circuit/         # Three-state atomic circuit breaker
+│   ├── enrichment/      # Gemini enricher + passthrough fallback
+│   ├── detector/        # Sliding window z-score anomaly detection
+│   ├── storage/         # PostgreSQL store (pgx/v5)
+│   ├── alert/           # Redis pub/sub publisher
+│   ├── grpcserver/      # gRPC IngestStream + WatchAlerts
+│   ├── ws/              # WebSocket hub + client
+│   ├── api/             # HTTP handlers
+│   └── middleware/      # Token bucket rate limiter + API key auth
+├── pkg/event/           # Shared event types
+├── proto/               # Protobuf definitions + generated code
+└── web/                 # Dashboard (Tailwind CDN + Chart.js, no build step)
+```

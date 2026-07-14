@@ -1,0 +1,9 @@
+bin/
+tmp/
+.git/
+.env
+*.env.local
+grafana/
+prometheus.yml
+docker-compose.yml
+**/*_test.go

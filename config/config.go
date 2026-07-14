@@ -8,12 +8,14 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	Postgres PostgresConfig
-	Redis    RedisConfig
-	Buffer   BufferConfig
-	Worker   WorkerConfig
-	Gemini   GeminiConfig
+	Server    ServerConfig
+	Postgres  PostgresConfig
+	Redis     RedisConfig
+	Buffer    BufferConfig
+	Worker    WorkerConfig
+	Gemini    GeminiConfig
+	RateLimit RateLimitConfig
+	Auth      AuthConfig
 }
 
 type ServerConfig struct {
@@ -44,6 +46,15 @@ type GeminiConfig struct {
 	APIKey string
 }
 
+type RateLimitConfig struct {
+	RPS   float64
+	Burst int
+}
+
+type AuthConfig struct {
+	APIKey string
+}
+
 // Load reads configuration from environment variables (and optional .env file).
 // Env var names are SCREAMING_SNAKE_CASE versions of the dot-separated key:
 // e.g. server.port → SERVER_PORT, buffer.capacity → BUFFER_CAPACITY.
@@ -63,6 +74,9 @@ func Load() (*Config, error) {
 	v.SetDefault("buffer.capacity", 4096)
 	v.SetDefault("worker.count", 8)
 	v.SetDefault("worker.max_concurrent", 32)
+	v.SetDefault("ratelimit.rps", 100.0)
+	v.SetDefault("ratelimit.burst", 200)
+	v.SetDefault("auth.api_key", "")
 
 	cfg := &Config{
 		Server: ServerConfig{
@@ -86,6 +100,13 @@ func Load() (*Config, error) {
 		},
 		Gemini: GeminiConfig{
 			APIKey: v.GetString("gemini.api_key"),
+		},
+		RateLimit: RateLimitConfig{
+			RPS:   v.GetFloat64("ratelimit.rps"),
+			Burst: v.GetInt("ratelimit.burst"),
+		},
+		Auth: AuthConfig{
+			APIKey: v.GetString("auth.api_key"),
 		},
 	}
 

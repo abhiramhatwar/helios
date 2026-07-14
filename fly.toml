@@ -1,0 +1,56 @@
+app = "helios-events"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  BUFFER_CAPACITY = "4096"
+  WORKER_COUNT = "8"
+  WORKER_MAX_CONCURRENT = "32"
+  RATELIMIT_RPS = "100"
+  RATELIMIT_BURST = "200"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 9090
+
+  [[services.ports]]
+    port = 9090
+    handlers = ["tls"]
+
+[mounts]
+  # No persistent volume needed — state lives in Postgres + Redis.
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

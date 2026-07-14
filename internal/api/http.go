@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helios/internal/buffer"
+	"github.com/helios/internal/middleware"
 	"github.com/helios/internal/ws"
 	"github.com/helios/pkg/event"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -18,21 +19,32 @@ import (
 // Server is the HTTP layer. It owns the mux and injects the ring buffer
 // so handlers can enqueue events without touching any other pipeline detail.
 type Server struct {
-	rb  *buffer.RingBuffer[event.Event]
-	hub *ws.Hub
-	log zerolog.Logger
-	mux *http.ServeMux
+	rb          *buffer.RingBuffer[event.Event]
+	hub         *ws.Hub
+	log         zerolog.Logger
+	mux         *http.ServeMux
+	rateLimiter *middleware.RateLimiter
+	apiKey      string
 }
 
-func New(rb *buffer.RingBuffer[event.Event], hub *ws.Hub, log zerolog.Logger) *Server {
-	s := &Server{rb: rb, hub: hub, log: log, mux: http.NewServeMux()}
+func New(rb *buffer.RingBuffer[event.Event], hub *ws.Hub, log zerolog.Logger, rps float64, burst int, apiKey string) *Server {
+	s := &Server{
+		rb:          rb,
+		hub:         hub,
+		log:         log,
+		mux:         http.NewServeMux(),
+		rateLimiter: middleware.NewRateLimiter(rps, burst),
+		apiKey:      apiKey,
+	}
 	s.routes()
 	return s
 }
 
-// Handler returns the root handler, wrapped with request logging middleware.
+// Handler returns the root handler, chained: logging → rate limit → auth → mux.
 func (s *Server) Handler() http.Handler {
-	return s.logMiddleware(s.mux)
+	chain := middleware.APIKeyAuth(s.apiKey)(s.mux)
+	chain = s.rateLimiter.Limit(chain)
+	return s.logMiddleware(chain)
 }
 
 func (s *Server) routes() {
