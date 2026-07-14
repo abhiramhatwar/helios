@@ -1,5 +1,9 @@
 # ── Build stage ──────────────────────────────────────────────────────────────
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
+
+# go.mod requires Go 1.25 (grpc v1.82). GOTOOLCHAIN=auto lets the Go 1.24 image
+# download and invoke the 1.25 toolchain automatically during the build.
+ENV GOTOOLCHAIN=auto
 
 RUN apk add --no-cache git ca-certificates
 
