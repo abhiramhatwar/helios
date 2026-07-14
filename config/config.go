@@ -13,6 +13,7 @@ type Config struct {
 	Redis    RedisConfig
 	Buffer   BufferConfig
 	Worker   WorkerConfig
+	Gemini   GeminiConfig
 }
 
 type ServerConfig struct {
@@ -39,6 +40,10 @@ type WorkerConfig struct {
 	MaxConcurrent int
 }
 
+type GeminiConfig struct {
+	APIKey string
+}
+
 // Load reads configuration from environment variables (and optional .env file).
 // Env var names are SCREAMING_SNAKE_CASE versions of the dot-separated key:
 // e.g. server.port → SERVER_PORT, buffer.capacity → BUFFER_CAPACITY.
@@ -48,6 +53,7 @@ func Load() (*Config, error) {
 	v.AutomaticEnv()
 
 	// defaults
+	v.SetDefault("gemini.api_key", "")
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("server.read_timeout_secs", 10)
@@ -77,6 +83,9 @@ func Load() (*Config, error) {
 		Worker: WorkerConfig{
 			Count:         v.GetInt("worker.count"),
 			MaxConcurrent: v.GetInt("worker.max_concurrent"),
+		},
+		Gemini: GeminiConfig{
+			APIKey: v.GetString("gemini.api_key"),
 		},
 	}
 
